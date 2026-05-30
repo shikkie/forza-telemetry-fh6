@@ -1,0 +1,19 @@
+{
+  "_comment": "Copy this file to cars.json and fill in real CarOrdinal values from your FH6 telemetry. Keys must be strings in JSON (they get converted to int).",
+  "2847": {
+    "name": "Porsche 911 GT3 RS (992)",
+    "manufacturer": "Porsche",
+    "year": 2023,
+    "pi": 920,
+    "class": "S2",
+    "drivetrain": "RWD"
+  },
+  "3912": {
+    "name": "Ferrari 488 GTB",
+    "manufacturer": "Ferrari",
+    "year": 2019,
+    "pi": 885,
+    "class": "S1",
+    "drivetrain": "RWD"
+  }
+}

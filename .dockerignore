@@ -1,0 +1,73 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*~
+
+# Git
+.git/
+.gitignore
+
+# Environment & secrets (never ship these)
+.env
+.env.local
+.env.*
+
+# Logs & runtime
+logs/
+*.log
+.pids/
+*.sock
+/tmp/forza-telemetry*.sock
+
+# Test / dev data
+tests/
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.ruff_cache/
+.mypy_cache/
+
+# Docker (prevent recursive copy)
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Mongo data (never inside image)
+mongo-data/
+data/
+
+# Misc
+README.md
+LICENSE
+*.md
+!README.md   # keep if you want it in image (usually not necessary)

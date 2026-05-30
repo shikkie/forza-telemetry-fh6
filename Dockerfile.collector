@@ -1,0 +1,67 @@
+# =============================================================================
+# Forza Horizon 6 Telemetry - Dedicated Collector Dockerfile
+#
+# Use this when you want an extremely explicit "collector only" image
+# with no dashboard code paths in the final layers (minor size win).
+#
+# Most people should just use the main Dockerfile or docker compose.
+# =============================================================================
+
+# syntax=docker/dockerfile:1
+FROM python:3.12-slim AS builder
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /build
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+FROM python:3.12-slim
+
+LABEL org.opencontainers.image.title="Forza Horizon 6 Telemetry Collector" \
+      org.opencontainers.image.description="Dedicated production collector image"
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/opt/venv/bin:$PATH" \
+    FORZA_UDP_HOST=0.0.0.0 \
+    FORZA_UDP_PORT=20066 \
+    MONGO_URI=mongodb://mongo:27017 \
+    MONGO_DB=forza_telemetry_fh6 \
+    SOCKET_PATH=/tmp/forza-telemetry.sock \
+    LOG_LEVEL=INFO
+
+RUN groupadd --system --gid 1000 forza \
+ && useradd --system --uid 1000 --gid forza --home /app --shell /sbin/nologin forza
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates tini \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY --from=builder /opt/venv /opt/venv
+COPY --chown=forza:forza . .
+
+RUN pip install --no-deps -e .
+
+RUN mkdir -p /tmp /app/logs /app/.pids \
+ && chown -R forza:forza /app /tmp
+
+USER forza
+WORKDIR /app
+
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["forza-telemetry", "collector"]
+
+EXPOSE 20066/udp

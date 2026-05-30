@@ -1,0 +1,70 @@
+# =============================================================================
+# Forza Horizon 6 Telemetry - Dashboard Dockerfile
+#
+# Separate image for the Textual TUI dashboard.
+# This is primarily useful for development / debugging when you want the
+# live UI inside a container (rare in true production).
+#
+# Build: docker compose build dashboard
+# Run:   docker compose run --rm dashboard
+# =============================================================================
+
+# syntax=docker/dockerfile:1
+FROM python:3.12-slim AS builder
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /build
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# -----------------------------------------------------------------------------
+# Dashboard runtime (needs TTY support)
+# -----------------------------------------------------------------------------
+FROM python:3.12-slim
+
+LABEL org.opencontainers.image.title="Forza Horizon 6 Telemetry Dashboard" \
+      org.opencontainers.image.description="Textual live dashboard for Forza Horizon 6 telemetry"
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/opt/venv/bin:$PATH" \
+    SOCKET_PATH=/tmp/forza-telemetry.sock \
+    LOG_LEVEL=INFO \
+    TERM=xterm-256color
+
+RUN groupadd --system --gid 1000 forza \
+ && useradd --system --uid 1000 --gid forza --home /app --shell /bin/bash forza
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY --from=builder /opt/venv /opt/venv
+COPY --chown=forza:forza . .
+
+RUN pip install --no-deps -e .
+
+RUN mkdir -p /tmp /app/logs \
+ && chown -R forza:forza /app /tmp
+
+USER forza
+WORKDIR /app
+
+# Dashboard is interactive - no tini needed, we want the TUI to own the terminal
+ENTRYPOINT ["forza-telemetry"]
+CMD ["dashboard"]
+
+# The dashboard requires a real TTY when run

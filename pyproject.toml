@@ -1,0 +1,83 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "forza-telemetry-fh6"
+version = "0.1.0"
+description = "High-quality Forza Horizon 6 UDP telemetry collector with MongoDB storage and detachable Textual dashboard"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.11"
+authors = [
+    {name = "Forza Telemetry Contributors"}
+]
+keywords = ["forza", "horizon", "telemetry", "fh6", "racing", "udp", "motor", "textual", "dashboard"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Games/Entertainment :: Simulation",
+    "Topic :: System :: Monitoring",
+    "Framework :: AsyncIO",
+]
+
+dependencies = [
+    "typer[all]>=0.15.0",
+    "pydantic>=2.10.0",
+    "pydantic-settings>=2.7.0",
+    "motor>=3.6.0",
+    "textual>=1.0.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+    "ruff>=0.8.0",
+    "mypy>=1.14.0",
+]
+
+[project.scripts]
+forza-telemetry = "forza_telemetry.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/yourname/forza-telemetry-fh6"
+Documentation = "https://github.com/yourname/forza-telemetry-fh6#readme"
+Repository = "https://github.com/yourname/forza-telemetry-fh6"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/forza_telemetry"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+select = ["E", "F", "I", "W", "UP", "B", "C4", "SIM"]
+ignore = ["E501"]  # line length handled by formatter
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+strict_optional = true
+
+[[tool.mypy.overrides]]
+module = ["motor.*", "textual.*", "bson.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

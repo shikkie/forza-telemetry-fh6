@@ -1,0 +1,108 @@
+# =============================================================================
+# Forza Horizon 6 Telemetry Stack
+#
+# Production-oriented compose file.
+#
+# Usage:
+#   docker compose build                 # Build all images
+#   docker compose up -d                 # Start everything in background (mongo + collector)
+#   docker compose logs -f collector     # Follow collector logs
+#
+# Attach a live dashboard from your host machine (recommended):
+#   docker compose run --rm dashboard
+#
+# Individual control:
+#   docker compose up -d mongo collector
+#   docker compose up -d --build collector
+#
+# MongoDB is exposed on host port 27018 (internal port remains 27017).
+# Connect from host tools with: mongodb://localhost:27018
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # MongoDB - Latest official release
+  # ---------------------------------------------------------------------------
+  mongo:
+    image: mongo:latest
+    container_name: forza-mongo
+    restart: unless-stopped
+    ports:
+      - "27018:27017"   # Host port 27018 → container's internal 27017
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    networks:
+      - forza-net
+    # Uncomment if you want persistent Mongo config
+    # command: ["mongod", "--bind_ip_all", "--wiredTigerCacheSizeGB", "1.5"]
+
+  # ---------------------------------------------------------------------------
+  # Collector (the main always-on daemon)
+  # Uses the dedicated collector Dockerfile for clarity
+  # ---------------------------------------------------------------------------
+  collector:
+    build:
+      context: .
+      dockerfile: Dockerfile.collector
+    image: forza-telemetry-collector:latest
+    container_name: forza-collector
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      - FORZA_UDP_HOST=0.0.0.0
+      - FORZA_UDP_PORT=20066
+      - MONGO_URI=mongodb://mongo:27017
+      - MONGO_DB=forza_telemetry_fh6
+      - SOCKET_PATH=/tmp/forza-telemetry.sock
+      - LOG_LEVEL=INFO
+      - RAW_STORAGE_INTERVAL=5
+      - PARSED_STORAGE_INTERVAL=3
+    ports:
+      - "20066:20066/udp"     # Game must be able to reach this from your host
+    volumes:
+      - /tmp:/tmp             # Allows host dashboards to connect via the socket
+      - collector-logs:/app/logs
+    networks:
+      - forza-net
+    # Explicit command (also the default in the Dockerfile)
+    command: ["collector"]
+
+  # ---------------------------------------------------------------------------
+  # Optional: Run the Textual dashboard inside Docker (mostly for debugging)
+  # Prefer running `forza-telemetry dashboard` on your host machine instead.
+  # ---------------------------------------------------------------------------
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.dashboard
+    image: forza-telemetry-dashboard:latest
+    container_name: forza-dashboard
+    profiles: ["dashboard"]           # Only starts with: docker compose --profile dashboard ...
+    depends_on:
+      - collector
+    environment:
+      - SOCKET_PATH=/tmp/forza-telemetry.sock
+      - LOG_LEVEL=INFO
+    volumes:
+      - /tmp:/tmp
+    networks:
+      - forza-net
+    tty: true
+    stdin_open: true
+    command: ["dashboard"]
+
+volumes:
+  mongo-data:
+  collector-logs:
+
+networks:
+  forza-net:
+    driver: bridge

@@ -1,0 +1,14 @@
+# Core dependencies for forza-telemetry-fh6
+# Install with: pip install -r requirements.txt
+
+typer[all]>=0.15.0
+pydantic>=2.10.0
+pydantic-settings>=2.7.0
+motor>=3.6.0
+pymongo>=4.9.0          # For bson.Binary used with Motor
+textual>=1.0.0
+python-dotenv>=1.0.0
+
+# Optional but recommended for production
+orjson>=3.10.0          # Faster JSON (falls back to stdlib json)
+rich>=13.0.0            # Already pulled by typer/textual
