@@ -31,6 +31,12 @@ from forza_telemetry.comms import SocketClient
 from forza_telemetry.config import settings
 from forza_telemetry.packet import ForzaTelemetryPacket
 
+try:
+    import httpx
+except ImportError:  # pragma: no cover
+    httpx = None  # type: ignore
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -153,6 +159,7 @@ class ForzaDashboard(App):
     BINDINGS = [
         Binding("q", "quit", "Quit", show=True),
         Binding("r", "reset_stats", "Reset Stats", show=True),
+        Binding("c", "check_ordinal", "Check Ordinal", show=True),
         Binding("s", "toggle_socket", "Reconnect", show=False),
     ]
 
@@ -167,6 +174,16 @@ class ForzaDashboard(App):
         self.in_process_source = in_process_source
         self.socket_client: SocketClient | None = None
         self._update_count = 0
+
+        # In-memory cache for external car data (fh6cardata API) — lifetime of this dashboard process only.
+        # We only cache *successful* lookups. Failed lookups ("no such car") are intentionally
+        # NOT cached so we will retry the API on the next sighting of that ordinal
+        # (in case the fh6cardata companion DB has been updated since).
+        self._car_cache: dict[int, dict] = {}          # ordinal -> car info (only successful)
+        self._car_lookup_pending: set[int] = set()     # ordinals we are currently fetching
+        self._last_ordinal: int | None = None
+        self._car_client: "httpx.AsyncClient | None" = None
+
         # Do NOT set self._start_time — Textual's App base class uses it internally
         # as a float from perf_counter(). Overwriting it causes a crash on startup.
 
@@ -242,6 +259,15 @@ class ForzaDashboard(App):
             self.connected = True
             self.sub_title = "In-process collector"
 
+        # Prepare async HTTP client for optional car enrichment (only if httpx is available)
+        if httpx is not None:
+            self._car_client = httpx.AsyncClient(timeout=2.5, follow_redirects=True)
+
+    async def on_unmount(self) -> None:
+        """Clean up the car enrichment HTTP client."""
+        if self._car_client is not None:
+            await self._car_client.aclose()
+
     def _connect_to_collector(self) -> None:
         """Start background task that connects (and reconnects) to the collector socket."""
         self.socket_client = SocketClient(
@@ -272,6 +298,40 @@ class ForzaDashboard(App):
                 self.session_id = msg["session_id"]
         elif msg.get("type") == "session":
             self.session_id = msg.get("session_id")
+
+    async def _fetch_car_enrichment(self, ordinal: int) -> None:
+        """Fire-and-forget lookup against the external fh6cardata API.
+
+        Only *successful* results are cached. Failed lookups (unknown ordinal / 404)
+        are deliberately NOT cached. This means we will automatically retry the
+        API the next time we see that car_ordinal (in case the fh6cardata
+        companion database has been updated with the mapping since the last attempt).
+        """
+        if httpx is None or self._car_client is None:
+            return
+
+        # Already have it or already fetching it right now
+        if ordinal in self._car_cache or ordinal in self._car_lookup_pending:
+            return
+
+        self._car_lookup_pending.add(ordinal)
+
+        base = settings.fh6cardata_api.rstrip("/")
+        url = f"{base}/api/cars/by-ordinal/{ordinal}"
+
+        try:
+            resp = await self._car_client.get(url)
+            if resp.status_code == 200:
+                data = resp.json()
+                self._car_cache[ordinal] = data
+                logger.debug("Enriched car ordinal %s via fh6cardata API", ordinal)
+            # Do NOT cache failures. We want to re-check on the next sighting.
+        except Exception as exc:
+            logger.debug("fh6cardata API lookup failed for ordinal %s: %s", ordinal, exc)
+            # Intentionally do nothing — we will try again next time we see this ordinal
+        finally:
+            self._car_lookup_pending.discard(ordinal)
+
 
     def _refresh_ui(self) -> None:
         """Update all visible widgets from current_packet (called at ~20Hz)."""
@@ -331,10 +391,29 @@ class ForzaDashboard(App):
         else:
             hb_label.update("[dim]OFF[/]")
 
-        # Race info
+        # Race info - car with optional enrichment from external fh6cardata API
         car_ordinal = pkt.get("car_ordinal", 0)
-        car_name = get_car_name(car_ordinal)
-        self.query_one("#car-name", Label).update(f"Car: {car_name}")
+
+        # Detect ordinal change → trigger (non-blocking) lookup if needed
+        if car_ordinal and car_ordinal != self._last_ordinal:
+            self._last_ordinal = car_ordinal
+            # Only fetch if we don't already have it cached AND we're not already fetching it
+            if car_ordinal not in self._car_cache and car_ordinal not in self._car_lookup_pending:
+                asyncio.create_task(self._fetch_car_enrichment(car_ordinal))
+
+        # Prefer rich data from the companion API if we have it cached
+        car_info = self._car_cache.get(car_ordinal)
+        if car_info:
+            # The fh6cardata response has excellent fields: full_name, year, manufacturer, model
+            display = car_info.get("full_name") or " ".join(
+                str(x) for x in [car_info.get("year"), car_info.get("manufacturer"), car_info.get("model")] if x
+            ).strip()
+            # Always include the ordinal ID — it's the stable value from the game telemetry
+            self.query_one("#car-name", Label).update(f"Car: {display} ({car_ordinal})")
+        else:
+            # Fallback to the existing local cars.py logic
+            car_name = get_car_name(car_ordinal)
+            self.query_one("#car-name", Label).update(f"Car: {car_name}")
 
         self.query_one("#lap", Label).update(f"Lap: {pkt.get('lap_number', 0)}")
         self.query_one("#position", Label).update(f"Position: {pkt.get('race_position', 0)}")
@@ -399,6 +478,29 @@ class ForzaDashboard(App):
             asyncio.create_task(self._reconnect())
         else:
             self.notify("No socket client (running in-process?)")
+
+    def action_check_ordinal(self) -> None:
+        """Force an immediate re-lookup of the current car's ordinal via the fh6cardata API.
+
+        This bypasses the in-memory cache (useful for retrying ordinals that previously
+        returned "no such car" after the external database has been updated).
+        """
+        pkt = self.current_packet or {}
+        ordinal = pkt.get("car_ordinal", 0)
+
+        if not ordinal:
+            self.notify("No car ordinal available yet", severity="warning")
+            return
+
+        # Remove any previous result so we force a fresh check
+        self._car_cache.pop(ordinal, None)
+        self._car_lookup_pending.discard(ordinal)
+
+        if httpx is not None and self._car_client is not None:
+            asyncio.create_task(self._fetch_car_enrichment(ordinal))
+            self.notify(f"Re-checking ordinal {ordinal} via fh6cardata API...")
+        else:
+            self.notify("External car API lookup not available (httpx not loaded)", severity="error")
 
     async def _reconnect(self) -> None:
         if self.socket_client:

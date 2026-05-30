@@ -39,9 +39,13 @@ env/
 *.pem
 *.key
 
-# Logs
+# Logs (ensure all runtime logs are never committed)
 *.log
+**/*.log
 logs/
+log/
+**/logs/
+**/log/
 
 # Sockets
 *.sock
@@ -76,3 +80,14 @@ dmypy.json
 # Temporary test data
 test-*.db
 *.sqlite
+
+# Node.js / Vite React frontend (critical - never commit installed packages)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+dist/
+build/
+*.local
+.vite/

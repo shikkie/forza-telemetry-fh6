@@ -12,3 +12,12 @@ python-dotenv>=1.0.0
 # Optional but recommended for production
 orjson>=3.10.0          # Faster JSON (falls back to stdlib json)
 rich>=13.0.0            # Already pulled by typer/textual
+
+# Web API + Frontend support
+flask>=3.0.0
+flask-cors>=4.0.0
+flask-pymongo>=2.3.0
+gunicorn>=22.0.0        # For production WSGI serving
+
+# HTTP client for optional external car data enrichment (fh6cardata companion API)
+httpx>=0.27.0

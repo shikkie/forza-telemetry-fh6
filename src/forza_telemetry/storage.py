@@ -219,6 +219,21 @@ class MongoStorage:
             "fuel": packet.fuel,
             "boost": packet.boost,
             "car_ordinal": packet.car_ordinal,
+            # World position for top-down path map
+            "position_x": packet.position_x,
+            "position_y": packet.position_y,
+            "position_z": packet.position_z,
+            "yaw": packet.yaw,
+            # Map combined slip to the field names the frontend grip/oversteer cards expect
+            "tire_slip_fl": packet.tire_combined_slip_fl,
+            "tire_slip_fr": packet.tire_combined_slip_fr,
+            "tire_slip_rl": packet.tire_combined_slip_rl,
+            "tire_slip_rr": packet.tire_combined_slip_rr,
+            # Handbrake + clutch now properly stored (raw byte for UI compatibility + normalized)
+            "handbrake": packet.handbrake,
+            "handbrake_normalized": packet.handbrake_normalized,
+            "clutch": packet.clutch,
+            "clutch_normalized": packet.clutch_normalized,
         }
 
         try:
@@ -258,6 +273,8 @@ class MongoStorage:
                 "speed": packet.speed,
                 "rpm": packet.current_engine_rpm,
                 "gear": packet.gear,
+                "handbrake": packet.handbrake,
+                "clutch": packet.clutch,
             }
 
             try:
@@ -281,6 +298,8 @@ class MongoStorage:
                         "speed": packet.speed,
                         "rpm": packet.current_engine_rpm,
                         "gear": packet.gear,
+                        "handbrake": packet.handbrake,
+                        "clutch": packet.clutch,
                     })
                 self._raw_queue.task_done()
             except Exception:

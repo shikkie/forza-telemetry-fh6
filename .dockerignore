@@ -41,9 +41,13 @@ env/
 .env.local
 .env.*
 
-# Logs & runtime
-logs/
+# Logs & runtime (never ship logs or sensitive runtime data)
 *.log
+**/*.log
+logs/
+log/
+**/logs/
+**/log/
 .pids/
 *.sock
 /tmp/forza-telemetry*.sock
@@ -71,3 +75,10 @@ README.md
 LICENSE
 *.md
 !README.md   # keep if you want it in image (usually not necessary)
+
+# Node.js / frontend build artifacts (never copy into images)
+node_modules/
+npm-debug.log*
+dist/
+build/
+.vite/

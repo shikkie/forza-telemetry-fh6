@@ -2,6 +2,8 @@
 
 **High-quality, production-ready UDP telemetry listener for Forza Horizon 6 (324-byte packets).**
 
+> **For AI coding agents**: See [AGENTS.md](./AGENTS.md) for how to work effectively in this repo (especially using `./dev.sh` to manage services).
+
 - Clean Pydantic v2 models from the official FH6 Data Out spec
 - Automatic race session detection (IsRaceOn rising edge)
 - MongoDB storage with raw binary packets + queryable sampled telemetry

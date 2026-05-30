@@ -406,6 +406,16 @@ class ForzaTelemetryPacket(BaseModel):
         return self.steer / 127.0
 
     @property
+    def handbrake_normalized(self) -> float:
+        """Handbrake (e-brake) as 0.0 - 1.0. 1.0 = fully pressed."""
+        return self.handbrake / 255.0
+
+    @property
+    def clutch_normalized(self) -> float:
+        """Clutch as 0.0 - 1.0."""
+        return self.clutch / 255.0
+
+    @property
     def gear_display(self) -> str:
         """Human friendly gear string."""
         if self.gear == 0:

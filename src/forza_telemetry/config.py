@@ -100,6 +100,17 @@ class Settings(BaseSettings):
     )
 
     # -------------------------------------------------------------------------
+    # Optional companion APIs
+    # -------------------------------------------------------------------------
+    fh6cardata_api: str = Field(
+        default="http://localhost:3002",
+        validation_alias="FH6CARDATA_API",
+        description="Base URL for the external fh6cardata API (https://github.com/shikkie/fh6cardata). "
+        "Used by the live dashboard to look up year/make/model by car_ordinal via /api/cars/by-ordinal/{id}. "
+        "Set via FH6CARDATA_API in .env (e.g. http://localhost:3002 or a remote host).",
+    )
+
+    # -------------------------------------------------------------------------
     # Session management
     # -------------------------------------------------------------------------
     session_idle_timeout_sec: int = Field(

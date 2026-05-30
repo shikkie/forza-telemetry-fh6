@@ -17,6 +17,14 @@
 #
 # MongoDB is exposed on host port 27018 (internal port remains 27017).
 # Connect from host tools with: mongodb://localhost:27018
+#
+# For local development with dev.sh:
+#   - API:     http://localhost:5003
+#   - Frontend (Vite): http://localhost:3003
+#
+# Production images:
+#   - API served with Gunicorn on internal port 5000
+#   - Frontend served as static build on internal port 80
 # =============================================================================
 
 services:
@@ -98,6 +106,48 @@ services:
     tty: true
     stdin_open: true
     command: ["dashboard"]
+
+  # ---------------------------------------------------------------------------
+  # Flask API - Exposes telemetry data + enforces Mongo indexes on startup
+  # ---------------------------------------------------------------------------
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    image: forza-telemetry-api:latest
+    container_name: forza-api
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      - MONGO_URI=mongodb://mongo:27017
+      - MONGO_DBNAME=forza_telemetry_fh6
+    ports:
+      - "5003:5000"   # Host 5003 → container 5000 (production image)
+    networks:
+      - forza-net
+
+  # ---------------------------------------------------------------------------
+  # Vite React + Bootstrap Frontend (development)
+  # In production you would build the frontend and serve it statically.
+  # ---------------------------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: forza-telemetry-frontend:latest
+    container_name: forza-frontend
+    ports:
+      - "3003:80"   # Production build served on host 3003
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - VITE_API_URL=http://localhost:5003
+    networks:
+      - forza-net
+    profiles: ["frontend"]
 
 volumes:
   mongo-data:

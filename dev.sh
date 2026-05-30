@@ -7,19 +7,21 @@
 # Components managed:
 #   - mongo     → MongoDB via docker compose (latest image)
 #   - collector → The UDP telemetry collector (Python daemon)
+#   - api       → Flask API (dev server on port 5003)
+#   - frontend  → Vite React dev server (on port 3003)
 #
-# The dashboard is intentionally NOT managed here (it is an interactive TUI).
+# The Textual dashboard is intentionally NOT managed here (it is an interactive TUI).
 #
 # Usage:
-#   ./dev.sh                  # start all daemons
+#   ./dev.sh                  # start all daemons (mongo + collector + api + frontend)
 #   ./dev.sh start            # same
-#   ./dev.sh start collector
+#   ./dev.sh start api
+#   ./dev.sh start frontend
 #   ./dev.sh stop
-#   ./dev.sh stop mongo
+#   ./dev.sh stop api
 #   ./dev.sh restart
-#   ./dev.sh restart collector
 #   ./dev.sh status
-#   ./dev.sh logs [collector|mongo]
+#   ./dev.sh logs [all|api|frontend|collector|mongo]
 #
 # Safety:
 #   - Only kills PIDs that were started by this script
@@ -46,7 +48,7 @@ CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 # Components we know how to manage as daemons
-KNOWN_COMPONENTS=("mongo" "collector")
+KNOWN_COMPONENTS=("mongo" "collector" "api" "frontend")
 
 # -----------------------------------------------------------------------------
 # Helpers
@@ -80,6 +82,18 @@ is_our_process() {
 
     # Must contain forza_telemetry somewhere (collector)
     if [[ "$cmdline" == *"forza_telemetry"* ]] || [[ "$cmdline" == *"forza-telemetry"* ]]; then
+        return 0
+    fi
+
+    # API (Flask)
+    if [[ "$cmdline" == *"flask"* && "$cmdline" == *"api.app"* ]]; then
+        return 0
+    fi
+
+    # Frontend (Vite) - can be npm, node, or vite directly
+    if [[ "$cmdline" == *"vite"* ]] || 
+       [[ "$cmdline" == *"node"* && "$cmdline" == *"frontend"* ]] ||
+       [[ "$cmdline" == *"npm"* && "$cmdline" == *"dev"* && "$cmdline" == *"3003"* ]]; then
         return 0
     fi
 
@@ -261,6 +275,192 @@ stop_collector() {
 }
 
 # -----------------------------------------------------------------------------
+# Component: api (Flask development server on port 5003)
+# -----------------------------------------------------------------------------
+start_api() {
+    local pid_file="${PID_DIR}/api.pid"
+
+    local existing_pid
+    existing_pid=$(get_pid "api")
+    if [[ -n "$existing_pid" ]] && is_our_process "$existing_pid" "api"; then
+        log_warn "API already running (PID $existing_pid)"
+        return 0
+    fi
+
+    if [[ -n "$existing_pid" ]]; then
+        remove_pid "api"
+    fi
+
+    load_env
+
+    local python_bin
+    if [[ -x "${SCRIPT_DIR}/.venv/bin/python" ]]; then
+        python_bin="${SCRIPT_DIR}/.venv/bin/python"
+    elif [[ -x "${SCRIPT_DIR}/.venv/bin/python3" ]]; then
+        python_bin="${SCRIPT_DIR}/.venv/bin/python3"
+    else
+        python_bin="$(command -v python3 || command -v python)"
+    fi
+
+    if [[ -z "$python_bin" ]]; then
+        log_error "No Python interpreter found for API."
+        return 1
+    fi
+
+    log_info "Starting Flask API (dev) on port 5003 using: $python_bin"
+
+    local log_file="${LOG_DIR}/api.log"
+
+    # Set Flask environment
+    export FLASK_APP="api.app:create_app"
+    export FLASK_ENV=development
+    export PYTHONPATH="${SCRIPT_DIR}:${PYTHONPATH:-}"
+
+    # Use setsid for clean process group
+    setsid "$python_bin" -m flask run \
+        --host 0.0.0.0 \
+        --port 5003 \
+        >>"$log_file" 2>&1 < /dev/null &
+
+    local pid=$!
+
+    sleep 1.5
+
+    if ! kill -0 "$pid" 2>/dev/null; then
+        log_error "API failed to start. Check logs:"
+        echo "    tail -n 50 $log_file" >&2
+        return 1
+    fi
+
+    write_pid "api" "$pid"
+    log_ok "API started (PID $pid) on http://localhost:5003 — logs: $log_file"
+}
+
+stop_api() {
+    local pid_file="${PID_DIR}/api.pid"
+    local pid
+    pid=$(get_pid "api")
+
+    if [[ -z "$pid" ]]; then
+        log_warn "No API PID file found"
+        return 0
+    fi
+
+    if ! is_our_process "$pid" "api"; then
+        log_warn "PID $pid does not appear to be an API we started."
+        remove_pid "api"
+        return 1
+    fi
+
+    log_info "Stopping API (PID $pid)..."
+
+    kill -TERM "$pid" 2>/dev/null || true
+
+    for i in {1..5}; do
+        if ! kill -0 "$pid" 2>/dev/null; then
+            break
+        fi
+        sleep 1
+    done
+
+    if kill -0 "$pid" 2>/dev/null; then
+        kill -KILL "$pid" 2>/dev/null || true
+    fi
+
+    remove_pid "api"
+    log_ok "API stopped"
+}
+
+# -----------------------------------------------------------------------------
+# Component: frontend (Vite dev server on port 3003)
+# -----------------------------------------------------------------------------
+start_frontend() {
+    local pid_file="${PID_DIR}/frontend.pid"
+
+    local existing_pid
+    existing_pid=$(get_pid "frontend")
+    if [[ -n "$existing_pid" ]] && is_our_process "$existing_pid" "frontend"; then
+        log_warn "Frontend already running (PID $existing_pid)"
+        return 0
+    fi
+
+    if [[ -n "$existing_pid" ]]; then
+        remove_pid "frontend"
+    fi
+
+    local frontend_dir="${SCRIPT_DIR}/frontend"
+
+    if [[ ! -d "$frontend_dir" ]]; then
+        log_error "frontend/ directory not found"
+        return 1
+    fi
+
+    if [[ ! -f "$frontend_dir/package.json" ]]; then
+        log_error "frontend/package.json not found. Did you run 'npm install' in frontend/?"
+        return 1
+    fi
+
+    log_info "Starting Vite frontend dev server on port 3003..."
+
+    local log_file="${LOG_DIR}/frontend.log"
+
+    # Run npm from within frontend directory.
+    # We set VITE_API_TARGET so the Vite proxy forwards /api calls to the correct backend port.
+    (
+        cd "$frontend_dir" || exit 1
+        VITE_API_TARGET=http://localhost:5003 npm run dev -- --port 3003 --host 0.0.0.0
+    ) >>"$log_file" 2>&1 &
+
+    local pid=$!
+
+    sleep 2
+
+    if ! kill -0 "$pid" 2>/dev/null; then
+        log_error "Frontend failed to start. Check logs:"
+        echo "    tail -n 50 $log_file" >&2
+        return 1
+    fi
+
+    write_pid "frontend" "$pid"
+    log_ok "Frontend started (PID $pid) on http://localhost:3003 — logs: $log_file"
+}
+
+stop_frontend() {
+    local pid_file="${PID_DIR}/frontend.pid"
+    local pid
+    pid=$(get_pid "frontend")
+
+    if [[ -z "$pid" ]]; then
+        log_warn "No frontend PID file found"
+        return 0
+    fi
+
+    if ! is_our_process "$pid" "frontend"; then
+        log_warn "PID $pid does not appear to be a frontend we started."
+        remove_pid "frontend"
+        return 1
+    fi
+
+    log_info "Stopping frontend (PID $pid)..."
+
+    kill -TERM "$pid" 2>/dev/null || true
+
+    for i in {1..5}; do
+        if ! kill -0 "$pid" 2>/dev/null; then
+            break
+        fi
+        sleep 1
+    done
+
+    if kill -0 "$pid" 2>/dev/null; then
+        kill -KILL "$pid" 2>/dev/null || true
+    fi
+
+    remove_pid "frontend"
+    log_ok "Frontend stopped"
+}
+
+# -----------------------------------------------------------------------------
 # Generic component dispatch
 # -----------------------------------------------------------------------------
 start_component() {
@@ -268,6 +468,8 @@ start_component() {
     case "$name" in
         mongo)     start_mongo ;;
         collector) start_collector ;;
+        api)       start_api ;;
+        frontend)  start_frontend ;;
         *)         log_error "Unknown component: $name"; return 1 ;;
     esac
 }
@@ -277,6 +479,8 @@ stop_component() {
     case "$name" in
         mongo)     stop_mongo ;;
         collector) stop_collector ;;
+        api)       stop_api ;;
+        frontend)  stop_frontend ;;
         *)         log_error "Unknown component: $name"; return 1 ;;
     esac
 }
@@ -289,12 +493,16 @@ start_all() {
     log_info "Starting all development daemons..."
     start_component mongo
     start_component collector
-    log_ok "Development stack is up"
+    start_component api
+    start_component frontend
+    log_ok "Development stack is up (mongo + collector + api:5003 + frontend:3003)"
 }
 
 stop_all() {
     log_info "Stopping all development daemons..."
-    # Stop in reverse order
+    # Stop in reverse order (frontend first, then api, etc.)
+    stop_component frontend || true
+    stop_component api || true
     stop_component collector || true
     stop_component mongo || true
     log_ok "Development stack stopped"
@@ -334,6 +542,26 @@ status() {
         echo -e "  mongo       ${RED}stopped${NC}"
     fi
 
+    # API (Flask on 5003)
+    local apid
+    apid=$(get_pid "api")
+    if [[ -n "$apid" ]] && is_our_process "$apid" "api"; then
+        echo -e "  api         ${GREEN}running${NC}   (PID $apid)  → http://localhost:5003"
+    else
+        echo -e "  api         ${RED}stopped${NC}"
+        [[ -f "${PID_DIR}/api.pid" ]] && echo "               (stale PID file present)"
+    fi
+
+    # Frontend (Vite on 3003)
+    local fpid
+    fpid=$(get_pid "frontend")
+    if [[ -n "$fpid" ]] && is_our_process "$fpid" "frontend"; then
+        echo -e "  frontend    ${GREEN}running${NC}   (PID $fpid)  → http://localhost:3003"
+    else
+        echo -e "  frontend    ${RED}stopped${NC}"
+        [[ -f "${PID_DIR}/frontend.pid" ]] && echo "               (stale PID file present)"
+    fi
+
     echo
     echo -e "  Logs:      ${LOG_DIR}/"
     echo -e "  PIDs:      ${PID_DIR}/"
@@ -341,45 +569,85 @@ status() {
 }
 
 logs() {
-    local component="${1:-collector}"
-    local log_file="${LOG_DIR}/${component}.log"
+    local components=("$@")
 
-    if [[ "$component" == "mongo" ]]; then
-        log_info "Tailing docker logs for mongo..."
-        docker compose -f "$COMPOSE_FILE" logs -f mongo
+    # Default to collector if no args
+    if [[ ${#components[@]} -eq 0 ]]; then
+        components=("collector")
+    fi
+
+    # Special case: logs all
+    if [[ "${components[0]}" == "all" ]]; then
+        log_info "Tailing all available logs (Ctrl+C to stop)..."
+        if ls "${LOG_DIR}"/*.log &>/dev/null; then
+            tail -f "${LOG_DIR}"/*.log
+        else
+            log_warn "No log files found in ${LOG_DIR}/ yet."
+        fi
         return
     fi
 
-    if [[ ! -f "$log_file" ]]; then
-        log_error "No log file for $component yet: $log_file"
+    # Handle mongo specially (docker logs)
+    if [[ " ${components[*]} " == *" mongo "* ]]; then
+        log_info "Tailing docker logs for mongo..."
+        docker compose -f "$COMPOSE_FILE" logs -f mongo &
+        # Remove mongo so we don't try to tail its file
+        components=("${components[@]/mongo}")
+    fi
+
+    # Collect real log files for other components
+    local log_files=()
+    for comp in "${components[@]}"; do
+        [[ -z "$comp" ]] && continue
+
+        local lf="${LOG_DIR}/${comp}.log"
+
+        # Special mapping
+        if [[ "$comp" == "frontend" ]]; then
+            lf="${LOG_DIR}/frontend.log"
+        fi
+
+        if [[ -f "$lf" ]]; then
+            log_files+=("$lf")
+        else
+            log_warn "No log file for component '$comp' yet: $lf"
+        fi
+    done
+
+    if [[ ${#log_files[@]} -eq 0 ]]; then
+        log_error "No valid log files to tail."
         return 1
     fi
 
-    log_info "Tailing $log_file (Ctrl+C to stop)..."
-    tail -f "$log_file"
+    log_info "Tailing: ${log_files[*]} (Ctrl+C to stop)..."
+    tail -f "${log_files[@]}"
 }
 
 usage() {
     cat <<EOF
-Usage: $(basename "$0") [COMMAND] [COMPONENT]
+Usage: $(basename "$0") [COMMAND] [COMPONENT...]
 
 Commands:
-  start [component]     Start all (or one) daemons
-  stop  [component]     Stop all (or one) daemons safely
-  restart [component]   Restart all (or one)
-  status                Show status of managed components
-  logs [component]      Tail logs (collector or mongo)
+  start [component]       Start all (or specific) daemons
+  stop  [component]       Stop all (or specific) daemons safely
+  restart [component]     Restart all (or specific)
+  status                  Show status of all managed components
+  logs [component|all]    Tail logs
 
 Components:
-  collector, mongo
+  mongo, collector, api, frontend
 
-Examples:
+Logs examples:
+  ./dev.sh logs                    # default: collector
+  ./dev.sh logs all                # tail all components at once
+  ./dev.sh logs api frontend       # tail specific components
+  ./dev.sh logs collector
+
+Other examples:
   ./dev.sh
   ./dev.sh start
-  ./dev.sh start collector
-  ./dev.sh restart
-  ./dev.sh stop mongo
-  ./dev.sh logs
+  ./dev.sh start api frontend
+  ./dev.sh status
 EOF
 }
 
@@ -420,7 +688,8 @@ main() {
             status
             ;;
         logs)
-            logs "$component"
+            shift  # remove "logs"
+            logs "$@"
             ;;
         -h|--help|help)
             usage
