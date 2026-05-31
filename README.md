@@ -11,6 +11,7 @@
 - Asyncio throughout + Unix socket IPC
 - Docker + docker-compose ready (includes MongoDB)
 - Fully configurable via `.env` + CLI flags (Typer)
+- Optional car details enrichment (year / make / model) via the [fh6cardata companion API](https://github.com/shikkie/fh6cardata) (see `FH6CARDATA_API` in `.env`)
 
 ---
 
@@ -285,6 +286,17 @@ pytest
 **High disk usage**
 - Increase `RAW_STORAGE_INTERVAL` and/or `PARSED_STORAGE_INTERVAL`
 - Add a TTL index on `raw_packets.ts` for automatic cleanup
+
+---
+
+## Companion Projects
+
+This project can optionally integrate with the companion car database tool:
+
+- **[fh6cardata](https://github.com/shikkie/fh6cardata)** — A separate Flask + React app that maintains a mapping of Forza car ordinals to real car information (year, manufacturer, model, etc.).  
+  The live dashboard can query it to show friendly car names instead of just the raw ordinal ID.
+
+See the `FH6CARDATA_API` setting in `.env.example` to enable it.
 
 ---
 
