@@ -18,6 +18,13 @@ def ensure_indexes(db: Database) -> None:
     This function is idempotent and safe to call on every startup.
     It is defensive against name conflicts from the collector.
     """
+    if db is None:
+        raise RuntimeError(
+            "ensure_indexes received None for db. "
+            "MONGO_URI must include a database name (e.g. mongodb://host:port/dbname), "
+            "or set MONGO_DB / MONGO_DBNAME."
+        )
+
     def safe_create_index(collection, keys, **kwargs):
         try:
             collection.create_index(keys, **kwargs)

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime
+from urllib.parse import urlparse, urlunparse
 
 from flask import Flask, jsonify, request
 from flask_cors import CORS
@@ -20,14 +21,41 @@ from api.indexing import ensure_indexes
 from api.routes import sessions_bp, telemetry_bp
 
 
+def _ensure_db_in_uri(uri: str, dbname: str) -> str:
+    """Ensure MONGO_URI contains a database name by appending if missing.
+
+    This is required because modern flask-pymongo (v2+) no longer supports
+    separate MONGO_DBNAME; the db must be in the URI for mongo.db to be set.
+    We support both MONGO_DB and MONGO_DBNAME env vars for compatibility
+    with collector config and docker-compose.
+    """
+    if not uri:
+        uri = f"mongodb://localhost:27018/{dbname}"
+    parsed = urlparse(uri)
+    if not parsed.path or parsed.path == "/":
+        new_path = f"/{dbname}"
+        return urlunparse(
+            (parsed.scheme, parsed.netloc, new_path, parsed.params, parsed.query, parsed.fragment)
+        )
+    return uri
+
+
 def create_app() -> Flask:
     app = Flask(__name__)
 
     # Configuration
-    app.config["MONGO_URI"] = os.getenv(
-        "MONGO_URI", "mongodb://localhost:27018/forza_telemetry_fh6"
+    # Support both MONGO_DB (used by collector/.env) and MONGO_DBNAME (used in some compose)
+    default_db = "forza_telemetry_fh6"
+    mongo_dbname = (
+        os.getenv("MONGO_DBNAME")
+        or os.getenv("MONGO_DB")
+        or default_db
     )
-    app.config["MONGO_DBNAME"] = os.getenv("MONGO_DBNAME", "forza_telemetry_fh6")
+    raw_uri = os.getenv(
+        "MONGO_URI", f"mongodb://localhost:27018/{default_db}"
+    )
+    app.config["MONGO_URI"] = _ensure_db_in_uri(raw_uri, mongo_dbname)
+    app.config["MONGO_DBNAME"] = mongo_dbname
 
     # Enable CORS for the Vite React frontend
     CORS(app, resources={r"/api/*": {"origins": "*"}})
